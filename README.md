@@ -1,1 +1,1 @@
-# terraform-provider-gandi
+# Gandi Hosting Terraform Provider

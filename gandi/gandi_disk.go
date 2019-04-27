@@ -31,8 +31,15 @@ func resourceDisk() *schema.Resource {
 				Optional: true,
 			},
 			"size": {
-				Type:     schema.TypeInt,
+				Type:     schema.TypeInt, // In GB
 				Optional: true,
+				ValidateFunc: func(val interface{}, key string) (warns []string, errs []error) {
+					v := val.(int)
+					if v < 0 {
+						errs = append(errs, fmt.Errorf("%q must positive (>0GB), got: %d", key, v))
+					}
+					return
+				},
 			},
 			// Computed
 			"state": {
@@ -67,7 +74,7 @@ func resourceDiskCreate(d *schema.ResourceData, m interface{}) error {
 		diskspec.Name = name.(string)
 	}
 	if size, ok := d.GetOk("size"); ok {
-		diskspec.Size = uint(size.(int))
+		diskspec.Size = size.(int)
 	}
 	srcdisk, fromImage := d.GetOk("src_disk_id")
 	var disk hosting.Disk
@@ -114,10 +121,9 @@ func resourceDiskRead(d *schema.ResourceData, m interface{}) error {
 }
 
 func resourceDiskUpdate(d *schema.ResourceData, m interface{}) error {
-	//add a vm id = attach?
 	d.Partial(true)
 	h := m.(hosting.Hosting)
-	disk := hosting.Disk{ID: d.Id()}
+	disk := hosting.Disk{ID: d.Id(), Size: d.Get("size").(int)}
 	if d.HasChange("name") {
 		_, newname := d.GetChange("name")
 		redisk, err := h.RenameDisk(disk, newname.(string))
@@ -129,10 +135,12 @@ func resourceDiskUpdate(d *schema.ResourceData, m interface{}) error {
 	}
 	if d.HasChange("size") {
 		oldsize, newsize := d.GetChange("size")
-		if newsize.(uint) <= oldsize.(uint) {
+		if newsize.(int) <= oldsize.(int) {
 			return fmt.Errorf("Disks cannot shrink in size")
 		}
-		exdisk, err := h.ExtendDisk(disk, newsize.(uint))
+		// Extends doesnt change the size, it adds to it
+		addedsize := newsize.(int) - oldsize.(int)
+		exdisk, err := h.ExtendDisk(disk, uint(addedsize))
 		if err != nil {
 			return err
 		}

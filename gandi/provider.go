@@ -33,6 +33,7 @@ func Provider() terraform.ResourceProvider {
 		ResourcesMap: map[string]*schema.Resource{
 			"gandi_disk": resourceDisk(),
 			"gandi_ip":   resourceIP(),
+			"gandi_vm":   resourceVM(),
 		},
 		ConfigureFunc: getGandiClient,
 	}

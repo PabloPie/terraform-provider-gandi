@@ -21,25 +21,32 @@ func resourceDisk() *schema.Resource {
 			"region_id": {
 				Type:     schema.TypeString,
 				Required: true,
+				// XXX: until we implement DC migration
+				ForceNew: true,
 			},
 			"src_disk_id": {
-				Type:     schema.TypeString,
-				Optional: true,
+				Type:          schema.TypeString,
+				Optional:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"image"},
+				Description:   "ID of the disk to use as source",
+			},
+			"image": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"src_disk_id"},
+				Description:   "Name of the image to use as source",
 			},
 			"name": {
-				Type:     schema.TypeString,
-				Optional: true,
+				Type:         schema.TypeString,
+				Optional:     true,
+				ValidateFunc: diskValidateName,
 			},
 			"size": {
-				Type:     schema.TypeInt, // In GB
-				Optional: true,
-				ValidateFunc: func(val interface{}, key string) (warns []string, errs []error) {
-					v := val.(int)
-					if v < 0 {
-						errs = append(errs, fmt.Errorf("%q must positive (>0GB), got: %d", key, v))
-					}
-					return
-				},
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Description: "Size in GB",
 			},
 			// Computed
 			"state": {
@@ -76,13 +83,25 @@ func resourceDiskCreate(d *schema.ResourceData, m interface{}) error {
 	if size, ok := d.GetOk("size"); ok {
 		diskspec.Size = size.(int)
 	}
-	srcdisk, fromImage := d.GetOk("src_disk_id")
+	srcdisk, fromDisk := d.GetOk("src_disk_id")
+	image, fromImage := d.GetOk("image")
 	var disk hosting.Disk
 	var err error
-	if fromImage {
+	if fromDisk {
 		diskimage := hosting.DiskImage{
 			DiskID:   srcdisk.(string),
 			RegionID: d.Get("region_id").(string),
+		}
+		if disk, err = h.CreateDiskFromImage(diskspec, diskimage); err != nil {
+			return err
+		}
+	} else if fromImage {
+		region := hosting.Region{
+			ID: diskspec.RegionID,
+		}
+		diskimage, err := h.ImageByName(image.(string), region)
+		if err != nil {
+			return err
 		}
 		if disk, err = h.CreateDiskFromImage(diskspec, diskimage); err != nil {
 			return err
@@ -158,4 +177,8 @@ func resourceDiskDelete(d *schema.ResourceData, m interface{}) error {
 	}
 	err := h.DeleteDisk(disk)
 	return err
+}
+
+func diskValidateName(value interface{}, name string) (warnings []string, errors []error) {
+	return
 }

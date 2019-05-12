@@ -2,6 +2,7 @@ package gandi
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/PabloPie/Gandi-Go/hosting"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -180,5 +181,9 @@ func resourceDiskDelete(d *schema.ResourceData, m interface{}) error {
 }
 
 func diskValidateName(value interface{}, name string) (warnings []string, errors []error) {
+	r := regexp.MustCompile(`^[-_0-9a-z]{1,15}$`)
+	if !r.Match([]byte(value.(string))) {
+		errors = append(errors, fmt.Errorf("Invalid name: '%s', does not match %s", value.(string), r))
+	}
 	return
 }

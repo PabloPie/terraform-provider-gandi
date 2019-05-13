@@ -14,9 +14,7 @@ func resourceIP() *schema.Resource {
 		Read:   resourceIPRead,
 		Update: resourceIPUpdate,
 		Delete: resourceIPDelete,
-		Importer: &schema.ResourceImporter{
-			State: schema.ImportStatePassthrough,
-		},
+		Exists: resourceIPExists,
 
 		Schema: map[string]*schema.Schema{
 			"region_id": {
@@ -33,6 +31,7 @@ func resourceIP() *schema.Resource {
 					}
 					return
 				},
+				ForceNew: true,
 			},
 			// Computed
 			"ip": {
@@ -77,7 +76,8 @@ func resourceIPRead(d *schema.ResourceData, m interface{}) error {
 	}
 	if len(ips) < 1 {
 		d.SetId("")
-		return fmt.Errorf("IP with ID %s not found", d.Id())
+		log.Printf("[ERR] IP with ID %s not found", d.Id())
+		return nil
 	}
 	ip := ips[0]
 	d.Set("state", ip.State)
@@ -113,11 +113,22 @@ func resourceIPUpdate(d *schema.ResourceData, m interface{}) error {
 	return resourceIPRead(d, m)
 }
 
-func resourceIPDelete(d *schema.ResourceData, m interface{}) error {
+func resourceIPDelete(d *schema.ResourceData, m interface{}) (err error) {
 	h := m.(hosting.Hosting)
 	ip := hosting.IPAddress{
 		ID: d.Id(),
 	}
-	err := h.DeleteIP(ip)
+	if exists, _ := resourceIPExists(d, m); exists {
+		err = h.DeleteIP(ip)
+	}
 	return err
+}
+
+func resourceIPExists(d *schema.ResourceData, m interface{}) (bool, error) {
+	h := m.(hosting.Hosting)
+	ips, err := h.DescribeIP(hosting.IPFilter{ID: d.Id()})
+	if len(ips) > 0 && err == nil {
+		return true, nil
+	}
+	return false, err
 }

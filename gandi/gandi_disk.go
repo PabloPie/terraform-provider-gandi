@@ -2,6 +2,7 @@ package gandi
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 
 	"github.com/PabloPie/Gandi-Go/hosting"
@@ -14,9 +15,7 @@ func resourceDisk() *schema.Resource {
 		Read:   resourceDiskRead,
 		Update: resourceDiskUpdate,
 		Delete: resourceDiskDelete,
-		Importer: &schema.ResourceImporter{
-			State: schema.ImportStatePassthrough,
-		},
+		Exists: resourceDiskExists,
 
 		Schema: map[string]*schema.Schema{
 			"region_id": {
@@ -59,7 +58,7 @@ func resourceDisk() *schema.Resource {
 				Computed: true,
 			},
 			"vm_ids": {
-				Type:     schema.TypeSet,
+				Type:     schema.TypeList,
 				Computed: true,
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
@@ -126,8 +125,9 @@ func resourceDiskRead(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 	if len(disks) < 1 {
+		log.Printf("[ERR] Disk with ID %s not found", d.Id())
 		d.SetId("")
-		return fmt.Errorf("Disk with ID %s not found", d.Id())
+		return nil
 	}
 	disk := disks[0]
 	d.Set("state", disk.State)
@@ -158,7 +158,7 @@ func resourceDiskUpdate(d *schema.ResourceData, m interface{}) error {
 		if newsize.(int) <= oldsize.(int) {
 			return fmt.Errorf("Disks cannot shrink in size")
 		}
-		// Extends doesnt change the size, it adds to it
+		// Extend doesnt change the size, it adds to it
 		addedsize := newsize.(int) - oldsize.(int)
 		exdisk, err := h.ExtendDisk(disk, uint(addedsize))
 		if err != nil {
@@ -171,13 +171,25 @@ func resourceDiskUpdate(d *schema.ResourceData, m interface{}) error {
 	return resourceDiskRead(d, m)
 }
 
-func resourceDiskDelete(d *schema.ResourceData, m interface{}) error {
+func resourceDiskDelete(d *schema.ResourceData, m interface{}) (err error) {
 	h := m.(hosting.Hosting)
-	disk := hosting.Disk{
-		ID: d.Id(),
+	if exists, _ := resourceDiskExists(d, m); exists {
+		disk := hosting.Disk{
+			ID: d.Id(),
+		}
+		err = h.DeleteDisk(disk)
 	}
-	err := h.DeleteDisk(disk)
-	return err
+	return
+}
+
+func resourceDiskExists(d *schema.ResourceData, m interface{}) (bool, error) {
+	h := m.(hosting.Hosting)
+
+	disk := h.DiskFromName(d.Get("name").(string))
+	if disk.ID == "" {
+		return false, nil
+	}
+	return true, nil
 }
 
 func diskValidateName(value interface{}, name string) (warnings []string, errors []error) {

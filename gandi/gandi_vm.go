@@ -16,6 +16,9 @@ func resourceVM() *schema.Resource {
 		Update: resourceVMUpdate,
 		Delete: resourceVMDelete,
 		Exists: resourceVMExists,
+		Importer: &schema.ResourceImporter{
+			State: schema.ImportStatePassthrough,
+		},
 
 		Schema: map[string]*schema.Schema{
 			// VM
@@ -79,16 +82,10 @@ func resourceVM() *schema.Resource {
 					},
 				},
 			},
-			// Disks
-			"boot_disk_id": {
-				Type:        schema.TypeString,
-				Required:    true,
-				Description: "ID of the disk to use as boot disk, must exist and be free",
-			},
 			"disks": {
 				Type:     schema.TypeList,
-				Optional: true,
-				Computed: true,
+				Required: true,
+				MinItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": {
@@ -106,10 +103,11 @@ func resourceVM() *schema.Resource {
 					},
 				},
 			},
-			// IPs
 			"ips": {
 				Type:     schema.TypeList,
 				Required: true,
+				MinItems: 1,
+				MaxItems: 4,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": {
@@ -140,15 +138,15 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	if err != nil {
 		return err
 	}
-	bootdisk, err := parseBootDisk(d, h)
-	if err != nil {
-		return err
-	}
 	ips, err := parseIPS(d, h)
 	if err != nil {
 		return err
 	}
-	vm, _, bootdisk, err = h.CreateVMWithExistingDiskAndIP(vmspec, ips[0], bootdisk)
+	disks, err := parseDisks(d, h)
+	if err != nil {
+		return err
+	}
+	vm, _, _, err = h.CreateVMWithExistingDiskAndIP(vmspec, ips[0], disks[0])
 	if err != nil {
 		return err
 	}
@@ -162,8 +160,8 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	disks := parseDisks(d, h)
-	for _, disk := range disks {
+	// Attach non-boot disks, the final disk list will still contain the boot disk
+	for _, disk := range disks[1:] {
 		log.Printf("[INFO] Attaching disk '%s' to vm '%s'...", disk.Name, vm.Hostname)
 		vm, disk, err := h.AttachDisk(vm, disk)
 		if err != nil {
@@ -217,9 +215,68 @@ func resourceVMRead(d *schema.ResourceData, m interface{}) error {
 }
 
 // Need to be considered for update:
-// easy: memory, cores, state, name
 // harder: disks, ip, boot_disk_id
 func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
+	h := m.(hosting.Hosting)
+	vm := hosting.VM{ID: d.Id(), RegionID: d.Get("region_id").(string)}
+	d.Partial(true)
+	if d.HasChange("memory") {
+		_, newmem := d.GetChange("memory")
+		vmupdated, err := h.UpdateVMMemory(vm, newmem.(int))
+		if err != nil {
+			log.Printf("[ERR] Memory update failed: %s", err)
+		} else {
+			log.Printf("[INFO] Memory for vm '%s' updated to %dGB", vmupdated.Hostname, vmupdated.Memory)
+			d.SetPartial("memory")
+			vm = vmupdated
+		}
+	}
+	if d.HasChange("cores") {
+		_, newcores := d.GetChange("cores")
+		vmupdated, err := h.UpdateVMCores(vm, newcores.(int))
+		if err != nil {
+			log.Printf("[ERR] Updating number of cores failed: %s", err)
+		} else {
+			log.Printf("[INFO] Number of cores for vm '%s' updated to %d", vmupdated.Hostname, vmupdated.Cores)
+			d.SetPartial("cores")
+			vm = vmupdated
+		}
+	}
+	if d.HasChange("state") {
+		_, newstate := d.GetChange("state")
+		state := newstate.(string)
+		var err error
+		switch state {
+		case "halted":
+			err = h.StopVM(vm)
+		case "running":
+			err = h.StartVM(vm)
+		case "deleted":
+			err = resourceVMDelete(d, m)
+		default:
+			log.Printf("[WARN] Invalid option for state '%s'", state)
+		}
+		if err != nil {
+			log.Printf("[ERR] Operation on VM failed: %s", err)
+		} else {
+			log.Printf("[INFO] Operation on VM successful")
+			d.SetPartial("state")
+			vm.State = state
+		}
+	}
+	if d.HasChange("name") {
+		_, newname := d.GetChange("name")
+		vmupdated, err := h.RenameVM(vm, newname.(string))
+		if err != nil {
+			log.Printf("[ERR] Error renaming VM '%s'", vm.Hostname)
+		} else {
+			log.Printf("[INFO] VM '%s' renamed to '%s'", vm.Hostname, vmupdated.Hostname)
+			d.SetPartial("name")
+			vm = vmupdated
+		}
+	}
+	if d.HasChange("disks") {
+	}
 
 	return resourceDiskRead(d, m)
 }
@@ -227,9 +284,35 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 // Deleting a vm deletes its boot disk and IP
 func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 	h := m.(hosting.Hosting)
-	vm := hosting.VM{ID: d.Id()}
-	if err := h.StopVM(vm); err != nil {
-		return err
+	vm := hosting.VM{ID: d.Id(), RegionID: d.Get("region_id").(string)}
+	var err error
+	if exists, _ := resourceVMExists(d, m); !exists {
+		return nil
+	}
+	h.StopVM(vm)
+	// detach ips and disks to avoid deletion
+	disklist := d.Get("disks").([]interface{})
+	for i := range disklist {
+		// name is the only value guaranteed to be set
+		diskaddr := fmt.Sprintf("disks.%d.name", i)
+		diskname := d.Get(diskaddr).(string)
+		// detach requires an id
+		disk := h.DiskFromName(diskname)
+		_, _, err = h.DetachDisk(vm, disk)
+		if err != nil {
+			return fmt.Errorf("[ERR] Could not detach disk '%s'(%s): %s", disk.Name, diskaddr, err)
+		}
+	}
+	iplist := d.Get("ips").([]interface{})
+	for i := range iplist {
+		// id is the only value guaranteed to be set
+		ipaddr := fmt.Sprintf("ips.%d.id", i)
+		ipid := d.Get(ipaddr).(string)
+		ip := hosting.IPAddress{ID: ipid, RegionID: d.Get("region_id").(string)}
+		_, _, err = h.DetachIP(vm, ip)
+		if err != nil {
+			return fmt.Errorf("[ERR] Could not detach IP '%s'(%s): %s", ip.IP, ipaddr, err)
+		}
 	}
 	if err := h.DeleteVM(vm); err != nil {
 		return err
@@ -297,10 +380,7 @@ func parseBootDisk(d *schema.ResourceData, h hosting.Hosting) (bootdisk hosting.
 }
 
 func parseIPS(d *schema.ResourceData, h hosting.Hosting) (ips []hosting.IPAddress, err error) {
-	ipslist, ok := d.GetOk("ips")
-	if !ok {
-		return nil, errors.New("Error, no ips set but a minimum of 1 is required")
-	}
+	ipslist := d.Get("ips")
 
 	for _, rawip := range ipslist.([]interface{}) {
 		ipmap := rawip.(map[string]interface{})
@@ -314,22 +394,27 @@ func parseIPS(d *schema.ResourceData, h hosting.Hosting) (ips []hosting.IPAddres
 		}
 		ips = append(ips, ip[0])
 	}
-	// ips were provided but none are actually valid
+	// at least 1 ip was provided but none are actually valid
 	if len(ips) < 1 {
 		return nil, errors.New("Error, ips provided, but none were found")
 	}
 	return
 }
 
-func parseDisks(d *schema.ResourceData, h hosting.Hosting) (disks []hosting.Disk) {
-	rawdisks := d.Get("disks")
+func parseDisks(d *schema.ResourceData, h hosting.Hosting) (disks []hosting.Disk, err error) {
+	diskslist := d.Get("disks")
 
-	for _, rawdisk := range rawdisks.([]interface{}) {
+	for _, rawdisk := range diskslist.([]interface{}) {
 		diskmap := rawdisk.(map[string]interface{})
 		disk := h.DiskFromName(diskmap["name"].(string))
 		if disk.ID != "" {
 			disks = append(disks, disk)
 		}
 	}
+	// at least 1 disk was provided but none are actually valid
+	if len(disks) < 1 {
+		return nil, errors.New("Error, disks provided, but none were found")
+	}
+
 	return
 }

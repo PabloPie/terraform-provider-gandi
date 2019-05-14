@@ -15,6 +15,9 @@ func resourceIP() *schema.Resource {
 		Update: resourceIPUpdate,
 		Delete: resourceIPDelete,
 		Exists: resourceIPExists,
+		Importer: &schema.ResourceImporter{
+			State: schema.ImportStatePassthrough,
+		},
 
 		Schema: map[string]*schema.Schema{
 			"region_id": {

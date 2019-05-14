@@ -16,6 +16,9 @@ func resourceDisk() *schema.Resource {
 		Update: resourceDiskUpdate,
 		Delete: resourceDiskDelete,
 		Exists: resourceDiskExists,
+		Importer: &schema.ResourceImporter{
+			State: schema.ImportStatePassthrough,
+		},
 
 		Schema: map[string]*schema.Schema{
 			"region_id": {

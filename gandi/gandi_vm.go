@@ -138,11 +138,13 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	if err != nil {
 		return err
 	}
-	ips, err := parseIPS(d, h)
+	ipslist := d.Get("ips").([]interface{})
+	ips, err := parseIPS(h, ipslist)
 	if err != nil {
 		return err
 	}
-	disks, err := parseDisks(d, h)
+	disklist := d.Get("disks").([]interface{})
+	disks, err := parseDisks(h, disklist)
 	if err != nil {
 		return err
 	}
@@ -170,18 +172,25 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	d.SetId(vm.ID)
+	d.Set("ssh_keys", vm.SSHKeysID)
 	d.Set("name", vm.Hostname)
 	return resourceVMRead(d, m)
 }
 
 func resourceVMRead(d *schema.ResourceData, m interface{}) error {
 	h := m.(hosting.Hosting)
-	vm, err := h.VMFromName(d.Get("name").(string))
-	// XXX: add retry option
+	vms, err := h.DescribeVM(hosting.VMFilter{ID: d.Id()})
 	if err != nil {
 		return err
 	}
-
+	// No vm with that ID exists
+	if len(vms) < 1 {
+		d.SetId("")
+		return nil
+	}
+	vm := vms[0]
+	d.Set("name", vm.Hostname)
+	d.Set("region_id", vm.RegionID)
 	d.Set("memory", vm.Memory)
 	if vm.Farm != "" {
 		d.Set("farm", vm.Farm)
@@ -214,8 +223,6 @@ func resourceVMRead(d *schema.ResourceData, m interface{}) error {
 	return nil
 }
 
-// Need to be considered for update:
-// harder: disks, ip, boot_disk_id
 func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 	h := m.(hosting.Hosting)
 	vm := hosting.VM{ID: d.Id(), RegionID: d.Get("region_id").(string)}
@@ -276,8 +283,45 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 	if d.HasChange("disks") {
-	}
+		//oldisks, newdisks := d.GetChange("disks")
 
+	}
+	if d.HasChange("ips") {
+		oldips, newips := d.GetChange("ips")
+		oldiplist, err := parseIPS(h, oldips.([]interface{}))
+		if err != nil {
+			log.Printf("%s", err)
+		}
+		newiplist, err := parseIPS(h, newips.([]interface{}))
+		if err != nil {
+			log.Printf("%s", err)
+		}
+		todetach, toattach := ipDiff(oldiplist, newiplist)
+		for _, ip := range todetach {
+			vm, ip, err = h.DetachIP(vm, ip)
+			if err != nil {
+				log.Printf("[ERR] Could not detach IP '%s': %s", ip.IP, err)
+			}
+		}
+		var ips []map[string]interface{}
+		for _, ip := range toattach {
+			vm, ip, err = h.AttachIP(vm, ip)
+			if err != nil {
+				log.Printf("[ERR] Could not attach IP '%s': %s", ip.IP, err)
+			} else {
+				ips = append(
+					ips,
+					map[string]interface{}{
+						"id": ip.ID,
+						"ip": ip.IP,
+					},
+				)
+			}
+		}
+		d.Set("ips", ips)
+		d.SetPartial("ips")
+	}
+	d.Partial(false)
 	return resourceDiskRead(d, m)
 }
 
@@ -323,8 +367,8 @@ func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 func resourceVMExists(d *schema.ResourceData, m interface{}) (bool, error) {
 	h := m.(hosting.Hosting)
 
-	_, err := h.VMFromName(d.Get("name").(string))
-	if err != nil {
+	vms, err := h.DescribeVM(hosting.VMFilter{ID: d.Id()})
+	if err != nil || len(vms) < 1 {
 		return false, err
 	}
 	return true, nil
@@ -345,13 +389,9 @@ func parseVMSpec(d *schema.ResourceData, h hosting.Hosting) (vmspec hosting.VMSp
 		vmspec.Cores = cores.(int)
 	}
 	if sshkeys, ok := d.GetOk("ssh_keys"); ok {
-		for _, sshkey := range sshkeys.([]string) {
-			key := h.KeyFromName(sshkey)
-			if key.ID == "" {
-				log.Printf("[WARN] Key '%s' not found", sshkey)
-				continue
-			}
-			vmspec.SSHKeysID = append(vmspec.SSHKeysID, key.ID)
+		rawkeys := sshkeys.(*schema.Set).List()
+		for _, key := range rawkeys {
+			vmspec.SSHKeysID = append(vmspec.SSHKeysID, key.(string))
 		}
 	}
 	if rawuserpass, ok := d.GetOk("userpass"); ok {
@@ -366,23 +406,8 @@ func parseVMSpec(d *schema.ResourceData, h hosting.Hosting) (vmspec hosting.VMSp
 	return
 }
 
-func parseBootDisk(d *schema.ResourceData, h hosting.Hosting) (bootdisk hosting.Disk, err error) {
-	bootdiskid := d.Get("boot_disk_id").(string)
-	disks, err := h.DescribeDisks(hosting.DiskFilter{ID: bootdiskid})
-	if err != nil {
-		return hosting.Disk{}, err
-	}
-	if len(disks) < 1 {
-		err = fmt.Errorf("Error, Disk '%s' not found", bootdiskid)
-	}
-	bootdisk = disks[0]
-	return
-}
-
-func parseIPS(d *schema.ResourceData, h hosting.Hosting) (ips []hosting.IPAddress, err error) {
-	ipslist := d.Get("ips")
-
-	for _, rawip := range ipslist.([]interface{}) {
+func parseIPS(h hosting.Hosting, iplist []interface{}) (ips []hosting.IPAddress, err error) {
+	for _, rawip := range iplist {
 		ipmap := rawip.(map[string]interface{})
 		ip, err := h.DescribeIP(hosting.IPFilter{ID: ipmap["id"].(string)})
 		if err != nil {
@@ -401,10 +426,8 @@ func parseIPS(d *schema.ResourceData, h hosting.Hosting) (ips []hosting.IPAddres
 	return
 }
 
-func parseDisks(d *schema.ResourceData, h hosting.Hosting) (disks []hosting.Disk, err error) {
-	diskslist := d.Get("disks")
-
-	for _, rawdisk := range diskslist.([]interface{}) {
+func parseDisks(h hosting.Hosting, disklist []interface{}) (disks []hosting.Disk, err error) {
+	for _, rawdisk := range disklist {
 		diskmap := rawdisk.(map[string]interface{})
 		disk := h.DiskFromName(diskmap["name"].(string))
 		if disk.ID != "" {
@@ -415,6 +438,30 @@ func parseDisks(d *schema.ResourceData, h hosting.Hosting) (disks []hosting.Disk
 	if len(disks) < 1 {
 		return nil, errors.New("Error, disks provided, but none were found")
 	}
+	return
+}
 
+// needs testing
+func ipDiff(oldips []hosting.IPAddress, newips []hosting.IPAddress) (todetach []hosting.IPAddress, toattach []hosting.IPAddress) {
+	found := false
+	for _, oldip := range oldips {
+		for i, newip := range newips {
+			if oldip.ID == newip.ID {
+				found = true
+				// no attach or detach operation for an ip that was already attached
+				// delete this ip from the list
+				newips = append(newips[:i], newips[i+1:]...)
+				break
+			}
+		}
+		// an ip previously attached (found in oldips) is no longer present
+		// in newips, add to the list to be detached
+		if !found {
+			todetach = append(todetach, oldip)
+		}
+	}
+	// disks that need to be attached are the disks that were on the new list of ips
+	// but not the old one
+	toattach = newips
 	return
 }

@@ -104,7 +104,7 @@ func resourceVM() *schema.Resource {
 				},
 			},
 			"ips": {
-				Type:     schema.TypeList,
+				Type:     schema.TypeSet,
 				Required: true,
 				MinItems: 1,
 				MaxItems: 4,
@@ -138,7 +138,7 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	if err != nil {
 		return err
 	}
-	ipslist := d.Get("ips").([]interface{})
+	ipslist := d.Get("ips").(*schema.Set).List()
 	ips, err := parseIPS(h, ipslist)
 	if err != nil {
 		return err
@@ -288,11 +288,11 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 	}
 	if d.HasChange("ips") {
 		oldips, newips := d.GetChange("ips")
-		oldiplist, err := parseIPS(h, oldips.([]interface{}))
+		oldiplist, err := parseIPS(h, oldips.(*schema.Set).List())
 		if err != nil {
 			log.Printf("%s", err)
 		}
-		newiplist, err := parseIPS(h, newips.([]interface{}))
+		newiplist, err := parseIPS(h, newips.(*schema.Set).List())
 		if err != nil {
 			log.Printf("%s", err)
 		}
@@ -347,15 +347,14 @@ func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 			return fmt.Errorf("[ERR] Could not detach disk '%s'(%s): %s", disk.Name, diskaddr, err)
 		}
 	}
-	iplist := d.Get("ips").([]interface{})
-	for i := range iplist {
-		// id is the only value guaranteed to be set
-		ipaddr := fmt.Sprintf("ips.%d.id", i)
-		ipid := d.Get(ipaddr).(string)
+	iplist := d.Get("ips").(*schema.Set).List()
+	for _, ipraw := range iplist {
+		ipmap := ipraw.(map[string]interface{})
+		ipid := ipmap["id"].(string)
 		ip := hosting.IPAddress{ID: ipid, RegionID: d.Get("region_id").(string)}
 		_, _, err = h.DetachIP(vm, ip)
 		if err != nil {
-			return fmt.Errorf("[ERR] Could not detach IP '%s'(%s): %s", ip.IP, ipaddr, err)
+			return fmt.Errorf("[ERR] Could not detach IP '%s'(%s): %s", ip.IP, ipid, err)
 		}
 	}
 	if err := h.DeleteVM(vm); err != nil {

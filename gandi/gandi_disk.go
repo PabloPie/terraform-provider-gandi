@@ -187,12 +187,8 @@ func resourceDiskDelete(d *schema.ResourceData, m interface{}) (err error) {
 
 func resourceDiskExists(d *schema.ResourceData, m interface{}) (bool, error) {
 	h := m.(hosting.Hosting)
-
 	disk := h.DiskFromName(d.Get("name").(string))
-	if disk.ID == "" {
-		return false, nil
-	}
-	return true, nil
+	return disk.ID != "", nil
 }
 
 func diskValidateName(value interface{}, name string) (warnings []string, errors []error) {

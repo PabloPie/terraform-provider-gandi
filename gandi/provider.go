@@ -34,6 +34,7 @@ func Provider() terraform.ResourceProvider {
 			"gandi_disk": resourceDisk(),
 			"gandi_ip":   resourceIP(),
 			"gandi_vm":   resourceVM(),
+			"gandi_ssh":  resourceSSH(),
 		},
 		ConfigureFunc: getGandiClient,
 	}

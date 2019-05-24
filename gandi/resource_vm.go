@@ -54,6 +54,8 @@ func resourceVM() *schema.Resource {
 				Computed: true,
 			},
 			// Auth
+			// keys and login can change on boot, c.f vm.start()
+			// Modification requires stopping and starting the machine
 			"ssh_keys": {
 				Type:     schema.TypeSet,
 				Optional: true,
@@ -134,7 +136,7 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	h := m.(hosting.Hosting)
 	var vm hosting.VM
 
-	vmspec, err := parseVMSpec(d, h)
+	vmspec, err := parseVMSpec(d)
 	if err != nil {
 		return err
 	}
@@ -283,8 +285,38 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 	if d.HasChange("disks") {
-		//oldisks, newdisks := d.GetChange("disks")
-
+		olddisks, newdisks := d.GetChange("disks")
+		olddisklist, err := parseDisks(h, olddisks.([]interface{}))
+		if err != nil {
+			log.Printf("%s", err)
+		}
+		newdisklist, err := parseDisks(h, newdisks.([]interface{}))
+		if err != nil {
+			log.Printf("%s", err)
+		}
+		todetach := diskDiff(olddisklist, newdisklist)
+		for _, disk := range todetach {
+			vm, disk, err = h.DetachDisk(vm, disk)
+			if err != nil {
+				log.Printf("[ERR] Could not detach Disk '%s': %s", disk.Name, err)
+			}
+		}
+		var disks []map[string]interface{}
+		for i, disk := range newdisklist {
+			vm, disk, err = h.AttachDiskAtPosition(vm, disk, i)
+			if err != nil {
+				log.Printf("[ERR] Could not attach Disk '%s': %s", disk.Name, err)
+			} else {
+				disks = append(
+					disks,
+					map[string]interface{}{
+						"id":   disk.ID,
+						"name": disk.Name,
+						"size": disk.Size,
+					},
+				)
+			}
+		}
 	}
 	if d.HasChange("ips") {
 		oldips, newips := d.GetChange("ips")
@@ -325,7 +357,7 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 	return resourceDiskRead(d, m)
 }
 
-// Deleting a vm deletes its boot disk and IP
+// Deleting a vm does not delete its boot disk nor any of its ips
 func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 	h := m.(hosting.Hosting)
 	vm := hosting.VM{ID: d.Id(), RegionID: d.Get("region_id").(string)}
@@ -365,15 +397,11 @@ func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 
 func resourceVMExists(d *schema.ResourceData, m interface{}) (bool, error) {
 	h := m.(hosting.Hosting)
-
 	vms, err := h.DescribeVM(hosting.VMFilter{ID: d.Id()})
-	if err != nil || len(vms) < 1 {
-		return false, err
-	}
-	return true, nil
+	return (err != nil || len(vms) < 1), err
 }
 
-func parseVMSpec(d *schema.ResourceData, h hosting.Hosting) (vmspec hosting.VMSpec, err error) {
+func parseVMSpec(d *schema.ResourceData) (vmspec hosting.VMSpec, err error) {
 	vmspec.RegionID = d.Get("region_id").(string)
 	if name, ok := d.GetOk("name"); ok {
 		vmspec.Hostname = name.(string)
@@ -462,5 +490,21 @@ func ipDiff(oldips []hosting.IPAddress, newips []hosting.IPAddress) (todetach []
 	// disks that need to be attached are the disks that were on the new list of ips
 	// but not the old one
 	toattach = newips
+	return
+}
+
+func diskDiff(olddisks []hosting.Disk, newdisks []hosting.Disk) (todetach []hosting.Disk) {
+	found := false
+	for _, olddisk := range olddisks {
+		for _, newdisk := range newdisks {
+			if olddisk.ID == newdisk.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			todetach = append(todetach, olddisk)
+		}
+	}
 	return
 }

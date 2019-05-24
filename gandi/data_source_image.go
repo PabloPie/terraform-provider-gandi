@@ -1,7 +1,7 @@
 package gandi
 
 import (
-	"github.com/PabloPie/Gandi-Go/hosting"
+	"github.com/PabloPie/go-gandi/hosting"
 	"github.com/hashicorp/terraform/helper/schema"
 )
 

@@ -317,6 +317,8 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 				)
 			}
 		}
+		d.Set("disks", disks)
+		d.SetPartial("disks")
 	}
 	if d.HasChange("ips") {
 		oldips, newips := d.GetChange("ips")
@@ -354,7 +356,7 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 		d.SetPartial("ips")
 	}
 	d.Partial(false)
-	return resourceDiskRead(d, m)
+	return nil
 }
 
 // Deleting a vm does not delete its boot disk nor any of its ips
@@ -398,7 +400,7 @@ func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 func resourceVMExists(d *schema.ResourceData, m interface{}) (bool, error) {
 	h := m.(hosting.Hosting)
 	vms, err := h.DescribeVM(hosting.VMFilter{ID: d.Id()})
-	return (err != nil || len(vms) < 1), err
+	return (err == nil && len(vms) > 0), err
 }
 
 func parseVMSpec(d *schema.ResourceData) (vmspec hosting.VMSpec, err error) {
@@ -470,8 +472,8 @@ func parseDisks(h hosting.Hosting, disklist []interface{}) (disks []hosting.Disk
 
 // needs testing
 func ipDiff(oldips []hosting.IPAddress, newips []hosting.IPAddress) (todetach []hosting.IPAddress, toattach []hosting.IPAddress) {
-	found := false
 	for _, oldip := range oldips {
+		found := false
 		for i, newip := range newips {
 			if oldip.ID == newip.ID {
 				found = true
@@ -494,8 +496,8 @@ func ipDiff(oldips []hosting.IPAddress, newips []hosting.IPAddress) (todetach []
 }
 
 func diskDiff(olddisks []hosting.Disk, newdisks []hosting.Disk) (todetach []hosting.Disk) {
-	found := false
 	for _, olddisk := range olddisks {
+		found := false
 		for _, newdisk := range newdisks {
 			if olddisk.ID == newdisk.ID {
 				found = true

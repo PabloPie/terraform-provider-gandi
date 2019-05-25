@@ -84,10 +84,32 @@ func resourceVM() *schema.Resource {
 					},
 				},
 			},
-			"disks": {
+			"boot_disk": {
 				Type:     schema.TypeList,
 				Required: true,
 				MinItems: 1,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"id": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"name": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+						"size": {
+							Type:     schema.TypeInt,
+							Computed: true,
+						},
+					},
+				},
+			},
+			"disks": {
+				Type:     schema.TypeSet,
+				Optional: true,
+				Computed: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": {
@@ -107,9 +129,9 @@ func resourceVM() *schema.Resource {
 			},
 			"ips": {
 				Type:     schema.TypeSet,
-				Required: true,
+				Optional: true,
+				Computed: true,
 				MinItems: 1,
-				MaxItems: 4,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": {
@@ -145,12 +167,13 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	if err != nil {
 		return err
 	}
-	disklist := d.Get("disks").([]interface{})
-	disks, err := parseDisks(h, disklist)
+	bootdiskraw := d.Get("boot_disk").([]interface{})
+	bootdisk, err := parseDisks(h, bootdiskraw)
 	if err != nil {
 		return err
 	}
-	vm, _, _, err = h.CreateVMWithExistingDiskAndIP(vmspec, ips[0], disks[0])
+
+	vm, _, _, err = h.CreateVMWithExistingDiskAndIP(vmspec, ips[0], bootdisk[0])
 	if err != nil {
 		return err
 	}
@@ -164,8 +187,14 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	// Attach non-boot disks, the final disk list will still contain the boot disk
-	for _, disk := range disks[1:] {
+	disklist := d.Get("disks").(*schema.Set).List()
+	disks, err := parseDisks(h, disklist)
+	if err != nil {
+		return err
+	}
+
+	// Attach non-boot disks, the final disk list will not contain the boot disk
+	for _, disk := range disks {
 		log.Printf("[INFO] Attaching disk '%s' to vm '%s'...", disk.Name, vm.Hostname)
 		vm, disk, err := h.AttachDisk(vm, disk)
 		if err != nil {
@@ -175,7 +204,6 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 
 	d.SetId(vm.ID)
 	d.Set("ssh_keys", vm.SSHKeysID)
-	d.Set("name", vm.Hostname)
 	return resourceVMRead(d, m)
 }
 
@@ -221,7 +249,9 @@ func resourceVMRead(d *schema.ResourceData, m interface{}) error {
 		)
 	}
 	d.Set("ips", ips)
-	d.Set("disks", disks)
+	// Disk at position 0 is the boot disk
+	d.Set("disks", disks[1:])
+	d.Set("boot_disk", disks[:1])
 	return nil
 }
 
@@ -233,23 +263,21 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 		_, newmem := d.GetChange("memory")
 		vmupdated, err := h.UpdateVMMemory(vm, newmem.(int))
 		if err != nil {
-			log.Printf("[ERR] Memory update failed: %s", err)
-		} else {
-			log.Printf("[INFO] Memory for vm '%s' updated to %dGB", vmupdated.Hostname, vmupdated.Memory)
-			d.SetPartial("memory")
-			vm = vmupdated
+			return fmt.Errorf("[ERR] Memory update failed: %s", err)
 		}
+		log.Printf("[INFO] Memory for vm '%s' updated to %dGB", vmupdated.Hostname, vmupdated.Memory)
+		d.SetPartial("memory")
+		vm = vmupdated
 	}
 	if d.HasChange("cores") {
 		_, newcores := d.GetChange("cores")
 		vmupdated, err := h.UpdateVMCores(vm, newcores.(int))
 		if err != nil {
-			log.Printf("[ERR] Updating number of cores failed: %s", err)
-		} else {
-			log.Printf("[INFO] Number of cores for vm '%s' updated to %d", vmupdated.Hostname, vmupdated.Cores)
-			d.SetPartial("cores")
-			vm = vmupdated
+			return fmt.Errorf("[ERR] Updating number of cores failed: %s", err)
 		}
+		log.Printf("[INFO] Number of cores for vm '%s' updated to %d", vmupdated.Hostname, vmupdated.Cores)
+		d.SetPartial("cores")
+		vm = vmupdated
 	}
 	if d.HasChange("state") {
 		_, newstate := d.GetChange("state")
@@ -263,100 +291,102 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 		case "deleted":
 			err = resourceVMDelete(d, m)
 		default:
-			log.Printf("[WARN] Invalid option for state '%s'", state)
+			return fmt.Errorf("[WARN] Invalid option for state '%s'", state)
 		}
 		if err != nil {
-			log.Printf("[ERR] Operation on VM failed: %s", err)
-		} else {
-			log.Printf("[INFO] Operation on VM successful")
-			d.SetPartial("state")
-			vm.State = state
+			return fmt.Errorf("[ERR] Operation on VM failed: %s", err)
 		}
+		log.Printf("[INFO] Operation on VM successful")
+		d.SetPartial("state")
+		vm.State = state
 	}
 	if d.HasChange("name") {
 		_, newname := d.GetChange("name")
 		vmupdated, err := h.RenameVM(vm, newname.(string))
 		if err != nil {
-			log.Printf("[ERR] Error renaming VM '%s'", vm.Hostname)
-		} else {
-			log.Printf("[INFO] VM '%s' renamed to '%s'", vm.Hostname, vmupdated.Hostname)
-			d.SetPartial("name")
-			vm = vmupdated
+			return fmt.Errorf("[ERR] Error renaming VM '%s'", vm.Hostname)
 		}
+		log.Printf("[INFO] VM '%s' renamed to '%s'", vm.Hostname, vmupdated.Hostname)
+		d.SetPartial("name")
+		vm = vmupdated
+	}
+	if d.HasChange("boot_disk") {
+		oldbootdisk, newbootdisk := d.GetChange("boot_disk")
+		olddisk, err := parseDisks(h, oldbootdisk.([]interface{}))
+		if err != nil {
+			return err
+		}
+		newdisk, err := parseDisks(h, newbootdisk.([]interface{}))
+		if err != nil {
+			return err
+		}
+		// Attaching to position 0 still leaves the other disk attached
+		vmupdated, _, err := h.AttachDiskAtPosition(vm, newdisk[0], 0)
+		if err != nil {
+			return err
+		}
+		vmupdated, _, err = h.DetachDisk(vmupdated, olddisk[0])
+		if err != nil {
+			return err
+		}
+		d.SetPartial("boot_disk")
 	}
 	if d.HasChange("disks") {
 		olddisks, newdisks := d.GetChange("disks")
-		olddisklist, err := parseDisks(h, olddisks.([]interface{}))
+		olddisklist, err := parseDisks(h, olddisks.(*schema.Set).List())
 		if err != nil {
-			log.Printf("%s", err)
+			return err
 		}
-		newdisklist, err := parseDisks(h, newdisks.([]interface{}))
+		newdisklist, err := parseDisks(h, newdisks.(*schema.Set).List())
 		if err != nil {
-			log.Printf("%s", err)
+			return err
 		}
-		todetach := diskDiff(olddisklist, newdisklist)
+		todetach, toattach := diskDiff(olddisklist, newdisklist)
 		for _, disk := range todetach {
-			vm, disk, err = h.DetachDisk(vm, disk)
+			vmupdated, _, err := h.DetachDisk(vm, disk)
 			if err != nil {
-				log.Printf("[ERR] Could not detach Disk '%s': %s", disk.Name, err)
+				return fmt.Errorf("[ERR] Could not detach Disk '%s': %s", disk.Name, err)
 			}
+			vm = vmupdated
 		}
-		var disks []map[string]interface{}
-		for i, disk := range newdisklist {
-			vm, disk, err = h.AttachDiskAtPosition(vm, disk, i)
+		for _, disk := range toattach {
+			vmupdated, _, err := h.AttachDisk(vm, disk)
 			if err != nil {
-				log.Printf("[ERR] Could not attach Disk '%s': %s", disk.Name, err)
-			} else {
-				disks = append(
-					disks,
-					map[string]interface{}{
-						"id":   disk.ID,
-						"name": disk.Name,
-						"size": disk.Size,
-					},
-				)
+				return fmt.Errorf("[ERR] Could not attach Disk '%s': %s", disk.Name, err)
 			}
+			vm = vmupdated
 		}
-		d.Set("disks", disks)
 		d.SetPartial("disks")
 	}
 	if d.HasChange("ips") {
 		oldips, newips := d.GetChange("ips")
 		oldiplist, err := parseIPS(h, oldips.(*schema.Set).List())
 		if err != nil {
-			log.Printf("%s", err)
+			return err
 		}
 		newiplist, err := parseIPS(h, newips.(*schema.Set).List())
 		if err != nil {
-			log.Printf("%s", err)
+			return err
 		}
 		todetach, toattach := ipDiff(oldiplist, newiplist)
 		for _, ip := range todetach {
-			vm, ip, err = h.DetachIP(vm, ip)
+			vmupdated, ip, err := h.DetachIP(vm, ip)
 			if err != nil {
-				log.Printf("[ERR] Could not detach IP '%s': %s", ip.IP, err)
+				return fmt.Errorf("[ERR] Could not detach IP '%s': %s", ip.IP, err)
 			}
+			vm = vmupdated
 		}
-		var ips []map[string]interface{}
 		for _, ip := range toattach {
-			vm, ip, err = h.AttachIP(vm, ip)
+			vmupdated, _, err := h.AttachIP(vm, ip)
 			if err != nil {
-				log.Printf("[ERR] Could not attach IP '%s': %s", ip.IP, err)
-			} else {
-				ips = append(
-					ips,
-					map[string]interface{}{
-						"id": ip.ID,
-						"ip": ip.IP,
-					},
-				)
+				return fmt.Errorf("[ERR] Could not attach IP '%s': %s", ip.IP, err)
 			}
+			vm = vmupdated
 		}
-		d.Set("ips", ips)
 		d.SetPartial("ips")
 	}
 	d.Partial(false)
-	return nil
+	return resourceVMRead(d, m)
 }
 
 // Deleting a vm does not delete its boot disk nor any of its ips
@@ -374,7 +404,7 @@ func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 		// name is the only value guaranteed to be set
 		diskaddr := fmt.Sprintf("disks.%d.name", i)
 		diskname := d.Get(diskaddr).(string)
-		// detach requires an id
+		// detach requires an id, get the disk from the name
 		disk := h.DiskFromName(diskname)
 		_, _, err = h.DetachDisk(vm, disk)
 		if err != nil {
@@ -489,18 +519,19 @@ func ipDiff(oldips []hosting.IPAddress, newips []hosting.IPAddress) (todetach []
 			todetach = append(todetach, oldip)
 		}
 	}
-	// disks that need to be attached are the disks that were on the new list of ips
+	// disks that need to be attached are the disks that are on the new list of ips
 	// but not the old one
 	toattach = newips
 	return
 }
 
-func diskDiff(olddisks []hosting.Disk, newdisks []hosting.Disk) (todetach []hosting.Disk) {
+func diskDiff(olddisks []hosting.Disk, newdisks []hosting.Disk) (todetach []hosting.Disk, toattach []hosting.Disk) {
 	for _, olddisk := range olddisks {
 		found := false
-		for _, newdisk := range newdisks {
+		for i, newdisk := range newdisks {
 			if olddisk.ID == newdisk.ID {
 				found = true
+				newdisks = append(newdisks[:i], newdisks[i+1:]...)
 				break
 			}
 		}
@@ -508,5 +539,6 @@ func diskDiff(olddisks []hosting.Disk, newdisks []hosting.Disk) (todetach []host
 			todetach = append(todetach, olddisk)
 		}
 	}
+	toattach = newdisks
 	return
 }

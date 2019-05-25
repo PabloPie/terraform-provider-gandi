@@ -399,17 +399,11 @@ func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 	}
 	h.StopVM(vm)
 	// detach ips and disks to avoid deletion
-	disklist := d.Get("disks").([]interface{})
-	for i := range disklist {
-		// name is the only value guaranteed to be set
-		diskaddr := fmt.Sprintf("disks.%d.name", i)
-		diskname := d.Get(diskaddr).(string)
-		// detach requires an id, get the disk from the name
-		disk := h.DiskFromName(diskname)
-		_, _, err = h.DetachDisk(vm, disk)
-		if err != nil {
-			return fmt.Errorf("[ERR] Could not detach disk '%s'(%s): %s", disk.Name, diskaddr, err)
-		}
+	bootdisk := d.Get("boot_disk").([]interface{})[0].(map[string]interface{})
+	disk := h.DiskFromName(bootdisk["name"].(string))
+	_, _, err = h.DetachDisk(vm, disk)
+	if err != nil {
+		return fmt.Errorf("[ERR] Could not detach disk '%s': %s", bootdisk["name"].(string), err)
 	}
 	iplist := d.Get("ips").(*schema.Set).List()
 	for _, ipraw := range iplist {

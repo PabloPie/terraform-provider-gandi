@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/PabloPie/go-gandi/hosting"
+	"github.com/hashicorp/terraform/helper/customdiff"
 	"github.com/hashicorp/terraform/helper/schema"
 )
 
@@ -72,6 +73,7 @@ func resourceDisk() *schema.Resource {
 				Computed: true,
 			},
 		},
+		CustomizeDiff: sizeUpdateCheck(),
 	}
 }
 
@@ -197,4 +199,14 @@ func diskValidateName(value interface{}, name string) (warnings []string, errors
 		errors = append(errors, fmt.Errorf("Invalid name: '%s', does not match %s", value.(string), r))
 	}
 	return
+}
+
+func sizeUpdateCheck() schema.CustomizeDiffFunc {
+	return customdiff.All(
+		customdiff.ForceNewIfChange("size", func(old, new, meta interface{}) bool {
+			// "size" can only increase, we must create a new resource
+			// if it is decreased
+			return new.(int) < old.(int)
+		}),
+	)
 }

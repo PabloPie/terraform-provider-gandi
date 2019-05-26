@@ -109,7 +109,6 @@ func resourceVM() *schema.Resource {
 			"disks": {
 				Type:     schema.TypeSet,
 				Optional: true,
-				Computed: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": {
@@ -167,7 +166,7 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 	bootdiskraw := d.Get("boot_disk").([]interface{})
-	bootdisk, err := parseDisks(h, bootdiskraw)
+	bootdisk := parseDisks(h, bootdiskraw)
 	if err != nil {
 		return err
 	}
@@ -187,7 +186,7 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	disklist := d.Get("disks").(*schema.Set).List()
-	disks, err := parseDisks(h, disklist)
+	disks := parseDisks(h, disklist)
 	if err != nil {
 		return err
 	}
@@ -230,6 +229,7 @@ func resourceVMRead(d *schema.ResourceData, m interface{}) error {
 	// Creating an ipv4 creates also an ipv6, to avoid adding
 	// to the state an unasked IP we check which ips were attached
 	// by the user
+	// XXX: this is temporary and is a bad workaround
 	askedips := d.Get("ips").(*schema.Set).List()
 	var ips []map[string]interface{}
 	for _, ip := range vm.Ips {
@@ -319,14 +319,8 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 	}
 	if d.HasChange("boot_disk") {
 		oldbootdisk, newbootdisk := d.GetChange("boot_disk")
-		olddisk, err := parseDisks(h, oldbootdisk.([]interface{}))
-		if err != nil {
-			return err
-		}
-		newdisk, err := parseDisks(h, newbootdisk.([]interface{}))
-		if err != nil {
-			return err
-		}
+		olddisk := parseDisks(h, oldbootdisk.([]interface{}))
+		newdisk := parseDisks(h, newbootdisk.([]interface{}))
 		// Attaching to position 0 still leaves the other disk attached
 		vmupdated, _, err := h.AttachDiskAtPosition(vm, newdisk[0], 0)
 		if err != nil {
@@ -340,14 +334,8 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 	}
 	if d.HasChange("disks") {
 		olddisks, newdisks := d.GetChange("disks")
-		olddisklist, err := parseDisks(h, olddisks.(*schema.Set).List())
-		if err != nil {
-			return err
-		}
-		newdisklist, err := parseDisks(h, newdisks.(*schema.Set).List())
-		if err != nil {
-			return err
-		}
+		olddisklist := parseDisks(h, olddisks.(*schema.Set).List())
+		newdisklist := parseDisks(h, newdisks.(*schema.Set).List())
 		todetach, toattach := diskDiff(olddisklist, newdisklist)
 		for _, disk := range todetach {
 			vmupdated, _, err := h.DetachDisk(vm, disk)
@@ -486,17 +474,13 @@ func parseIPS(h hosting.Hosting, iplist []interface{}) (ips []hosting.IPAddress,
 	return
 }
 
-func parseDisks(h hosting.Hosting, disklist []interface{}) (disks []hosting.Disk, err error) {
+func parseDisks(h hosting.Hosting, disklist []interface{}) (disks []hosting.Disk) {
 	for _, rawdisk := range disklist {
 		diskmap := rawdisk.(map[string]interface{})
 		disk := h.DiskFromName(diskmap["name"].(string))
 		if disk.ID != "" {
 			disks = append(disks, disk)
 		}
-	}
-	// at least 1 disk was provided but none are actually valid
-	if len(disks) < 1 {
-		return nil, errors.New("Error, disks provided, but none were found")
 	}
 	return
 }

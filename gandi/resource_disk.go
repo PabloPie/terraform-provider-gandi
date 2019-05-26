@@ -45,11 +45,13 @@ func resourceDisk() *schema.Resource {
 			"name": {
 				Type:         schema.TypeString,
 				Optional:     true,
+				Computed:     true,
 				ValidateFunc: diskValidateName,
 			},
 			"size": {
 				Type:        schema.TypeInt,
 				Optional:    true,
+				Computed:    true,
 				Description: "Size in GB",
 			},
 			// Computed

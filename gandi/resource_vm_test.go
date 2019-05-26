@@ -5,12 +5,63 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/terraform"
 
 	"github.com/PabloPie/go-gandi/hosting"
+	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 )
+
+func TestGandi_testContains(t *testing.T) {
+	cases := []struct {
+		iplist []interface{}
+		ip     hosting.IPAddress
+		exists bool
+	}{
+		{
+			iplist: []interface{}{
+				map[string]interface{}{
+					"id": "1",
+				},
+			},
+			ip: hosting.IPAddress{
+				ID: "1",
+			},
+			exists: true,
+		},
+		{
+			iplist: []interface{}{
+				map[string]interface{}{
+					"id": "1",
+				},
+			},
+			ip: hosting.IPAddress{
+				ID: "2",
+			},
+			exists: false,
+		},
+		{
+			iplist: []interface{}{
+				map[string]interface{}{
+					"id": "1",
+				},
+				map[string]interface{}{
+					"id": "5",
+				},
+			},
+			ip: hosting.IPAddress{
+				ID: "5",
+			},
+			exists: true,
+		},
+	}
+	for i, set := range cases {
+		contained := containsIP(set.iplist, set.ip)
+		if set.exists != contained {
+			t.Fatalf("Error in case %d, expected %t, got %t instead", i, set.exists, contained)
+		}
+	}
+}
 
 func TestGandi_ipDiff(t *testing.T) {
 	cases := []struct {
@@ -105,16 +156,19 @@ func TestGandi_ipDiff(t *testing.T) {
 }
 
 func TestAccGandiVM_basic(t *testing.T) {
-	machinename := fmt.Sprintf("gandivm-%d", acctest.RandInt())
-	config := fmt.Sprintf(testAccGandiVM_basic, machinename)
+	vmname := fmt.Sprintf("gandivm-%d", acctest.RandIntRange(1, 1000))
+	vmconfig := fmt.Sprintf(testAccGandiVMbasic, vmname)
 	resource.Test(t, resource.TestCase{
 		PreCheck:  func() { testAccPreCheck(t) },
 		Providers: testAccProviders,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				Config: vmconfig,
 				Check: resource.ComposeTestCheckFunc(
-					testCheckGandiVMExists(machinename),
+					testCheckGandiVMExists("gandi_vm.accTestVM"),
+					resource.TestCheckResourceAttr("gandi_vm.accTestVM", "name", vmname),
+					resource.TestCheckResourceAttr("gandi_vm.accTestVM", "cores", "1"),
+					resource.TestCheckResourceAttr("gandi_vm.accTestVM", "memory", "512"),
 				),
 			},
 		},
@@ -128,53 +182,50 @@ func testCheckGandiVMExists(vm string) resource.TestCheckFunc {
 			return fmt.Errorf("Not found: %s", vm)
 		}
 		h := testAccProvider.Meta().(hosting.Hosting)
-		vm, err := h.VMFromName(vm)
+		vmid := rs.Primary.ID
+		vms, err := h.DescribeVM(hosting.VMFilter{ID: vmid})
 		if err != nil {
-			return fmt.Errorf("%s", err)
+			return err
 		}
-		if vm.ID == "" {
-			return fmt.Errorf("Error: Machine %q does not exist", rs.Primary.ID)
+		if len(vms) < 1 {
+			return fmt.Errorf("Error: VM %q does not exist", vmid)
 		}
 		return nil
 	}
 }
 
-var testAccGandiVM_basic = `
+var testAccGandiVMbasic = `
 data "gandi_region" "datacenter" {
-	region_code = "FR-SD6"
+    region_code = "FR-SD6"
 }
 
-data "gandi_image" "debian" {
-	name = "Debian 9"
-	region_id = "${data.gandi_region.datacenter.id}"
+data "gandi_image" "debian9" {
+  name = "Debian 9"
+  region_id = "${data.gandi_region.datacenter.id}"
 }
 
-resource "gandi_ip" "testip" {
-	region_id = "${data.gandi_region.datacenter.id}"
-	version = 6
+resource "gandi_ip" "ip1" {
+  region_id = "${data.gandi_region.datacenter.id}"
+  version = 6
 }
 
-resource "gandi_disk" "testsystemdisk" {
-	region_id = "${data.gandi_region.datacenter.id}"
-	src_disk_id = "${data.gandi_image.debian.disk_id}"
-	name = "acctest_sysdisk"
-	size = 10
+resource "gandi_disk" "systemdisk1" {
+  region_id = "${data.gandi_region.datacenter.id}"
+  src_disk_id = "${data.gandi_image.debian9.disk_id}"
 }
 
-resource "gandi_ssh" "testkey" {
-	name = "acctest_key"
-	value = "ssh-rsa asdfasdf pasdfa"
-}
-
-resource "gandi_vm" "test" {
-	region_id = "${data.gandi_region.datacenter.id}"
-	name = "%s"
-	ips {
-		id = "${gandi_ip.testip.id}"
-	}
-	boot_disk {
-	  name = "${gandi_disk.testsystemdisk.name}"
-	}
-	ssh_keys = ["acctest_key"]
+resource "gandi_vm" "accTestVM" {
+  region_id = "${data.gandi_region.datacenter.id}"
+  name = "%s"
+  ips {
+    id = "${gandi_ip.ip1.id}"
   }
+  boot_disk {
+    name = "${gandi_disk.systemdisk1.name}"
+  }
+  userpass {
+    login = "testlogin"
+    password = "Passwordfortest123!"
+  }
+}
 `

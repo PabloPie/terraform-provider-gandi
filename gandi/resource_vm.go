@@ -129,8 +129,7 @@ func resourceVM() *schema.Resource {
 			},
 			"ips": {
 				Type:     schema.TypeSet,
-				Optional: true,
-				Computed: true,
+				Required: true,
 				MinItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
@@ -227,8 +226,16 @@ func resourceVMRead(d *schema.ResourceData, m interface{}) error {
 	}
 	d.Set("cores", vm.Cores)
 	d.Set("state", vm.State)
+
+	// Creating an ipv4 creates also an ipv6, to avoid adding
+	// to the state an unasked IP we check which ips were attached
+	// by the user
+	askedips := d.Get("ips").(*schema.Set).List()
 	var ips []map[string]interface{}
 	for _, ip := range vm.Ips {
+		if !containsIP(askedips, ip) {
+			continue
+		}
 		ips = append(
 			ips,
 			map[string]interface{}{
@@ -492,6 +499,16 @@ func parseDisks(h hosting.Hosting, disklist []interface{}) (disks []hosting.Disk
 		return nil, errors.New("Error, disks provided, but none were found")
 	}
 	return
+}
+
+func containsIP(ips []interface{}, ip hosting.IPAddress) bool {
+	for _, p := range ips {
+		ipmap := p.(map[string]interface{})
+		if ipmap["id"].(string) == ip.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // needs testing

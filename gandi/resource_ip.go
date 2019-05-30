@@ -73,7 +73,7 @@ func resourceIPRead(d *schema.ResourceData, m interface{}) error {
 	ipfilter := hosting.IPFilter{
 		ID: d.Id(),
 	}
-	ips, err := h.DescribeIP(ipfilter)
+	ips, err := h.ListIPs(ipfilter)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func resourceIPDelete(d *schema.ResourceData, m interface{}) (err error) {
 
 func resourceIPExists(d *schema.ResourceData, m interface{}) (bool, error) {
 	h := m.(hosting.Hosting)
-	ips, err := h.DescribeIP(hosting.IPFilter{ID: d.Id()})
+	ips, err := h.ListIPs(hosting.IPFilter{ID: d.Id()})
 	if len(ips) > 0 && err == nil {
 		return true, nil
 	}

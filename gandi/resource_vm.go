@@ -201,13 +201,13 @@ func resourceVMCreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	d.SetId(vm.ID)
-	d.Set("ssh_keys", vm.SSHKeysID)
+	d.Set("ssh_keys", vm.SSHKeys)
 	return resourceVMRead(d, m)
 }
 
 func resourceVMRead(d *schema.ResourceData, m interface{}) error {
 	h := m.(hosting.Hosting)
-	vms, err := h.DescribeVM(hosting.VMFilter{ID: d.Id()})
+	vms, err := h.ListVMs(hosting.VMFilter{ID: d.Id()})
 	if err != nil {
 		return err
 	}
@@ -418,7 +418,7 @@ func resourceVMDelete(d *schema.ResourceData, m interface{}) error {
 
 func resourceVMExists(d *schema.ResourceData, m interface{}) (bool, error) {
 	h := m.(hosting.Hosting)
-	vms, err := h.DescribeVM(hosting.VMFilter{ID: d.Id()})
+	vms, err := h.ListVMs(hosting.VMFilter{ID: d.Id()})
 	return (err == nil && len(vms) > 0), err
 }
 
@@ -457,7 +457,7 @@ func parseVMSpec(d *schema.ResourceData) (vmspec hosting.VMSpec, err error) {
 func parseIPS(h hosting.Hosting, iplist []interface{}) (ips []hosting.IPAddress, err error) {
 	for _, rawip := range iplist {
 		ipmap := rawip.(map[string]interface{})
-		ip, err := h.DescribeIP(hosting.IPFilter{ID: ipmap["id"].(string)})
+		ip, err := h.ListIPs(hosting.IPFilter{ID: ipmap["id"].(string)})
 		if err != nil {
 			return nil, err
 		}

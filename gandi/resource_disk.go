@@ -127,7 +127,7 @@ func resourceDiskRead(d *schema.ResourceData, m interface{}) error {
 	diskfilter := hosting.DiskFilter{
 		ID: d.Id(),
 	}
-	disks, err := h.DescribeDisks(diskfilter)
+	disks, err := h.ListDisks(diskfilter)
 	if err != nil {
 		return err
 	}

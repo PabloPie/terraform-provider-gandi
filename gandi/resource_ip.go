@@ -20,6 +20,7 @@ func resourceIP() *schema.Resource {
 		},
 
 		Schema: map[string]*schema.Schema{
+			// XXX: pending iface migration implementation
 			"region_id": {
 				Type:     schema.TypeString,
 				Required: true,
@@ -130,8 +131,5 @@ func resourceIPDelete(d *schema.ResourceData, m interface{}) (err error) {
 func resourceIPExists(d *schema.ResourceData, m interface{}) (bool, error) {
 	h := m.(hosting.Hosting)
 	ips, err := h.ListIPs(hosting.IPFilter{ID: d.Id()})
-	if len(ips) > 0 && err == nil {
-		return true, nil
-	}
-	return false, err
+	return len(ips) > 0 && err == nil, err
 }

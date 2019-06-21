@@ -321,6 +321,7 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 		oldbootdisk, newbootdisk := d.GetChange("boot_disk")
 		olddisk := parseDisks(h, oldbootdisk.([]interface{}))
 		newdisk := parseDisks(h, newbootdisk.([]interface{}))
+		h.StopVM(vm)
 		// Attaching to position 0 still leaves the other disk attached
 		vmupdated, _, err := h.AttachDiskAtPosition(vm, newdisk[0], 0)
 		if err != nil {
@@ -330,6 +331,7 @@ func resourceVMUpdate(d *schema.ResourceData, m interface{}) error {
 		if err != nil {
 			return err
 		}
+		h.StartVM(vm)
 		d.SetPartial("boot_disk")
 	}
 	if d.HasChange("disks") {

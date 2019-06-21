@@ -31,10 +31,12 @@ func Provider() terraform.ResourceProvider {
 			"gandi_image":  dataSourceImage(),
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"gandi_disk": resourceDisk(),
-			"gandi_ip":   resourceIP(),
-			"gandi_vm":   resourceVM(),
-			"gandi_ssh":  resourceSSH(),
+			"gandi_disk":       resourceDisk(),
+			"gandi_private_ip": resourcePrivateIP(),
+			"gandi_ip":         resourceIP(),
+			"gandi_vm":         resourceVM(),
+			"gandi_ssh":        resourceSSH(),
+			"gandi_vlan":       resourceVlan(),
 		},
 		ConfigureFunc: getGandiClient,
 	}

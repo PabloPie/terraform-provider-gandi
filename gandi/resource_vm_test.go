@@ -183,7 +183,7 @@ func testCheckGandiVMExists(vm string) resource.TestCheckFunc {
 		}
 		h := testAccProvider.Meta().(hosting.Hosting)
 		vmid := rs.Primary.ID
-		vms, err := h.DescribeVM(hosting.VMFilter{ID: vmid})
+		vms, err := h.ListVMs(hosting.VMFilter{ID: vmid})
 		if err != nil {
 			return err
 		}

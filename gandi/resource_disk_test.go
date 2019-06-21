@@ -94,7 +94,7 @@ func testCheckGandiDiskExists(disk string) resource.TestCheckFunc {
 		}
 		diskid := rs.Primary.ID
 		h := testAccProvider.Meta().(hosting.Hosting)
-		disks, err := h.DescribeDisks(hosting.DiskFilter{ID: diskid})
+		disks, err := h.ListDisks(hosting.DiskFilter{ID: diskid})
 		if err != nil {
 			return err
 		}

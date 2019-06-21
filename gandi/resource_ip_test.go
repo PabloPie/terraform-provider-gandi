@@ -47,7 +47,7 @@ func testCheckGandiIPExists(ip string) resource.TestCheckFunc {
 		}
 		ipid := rs.Primary.ID
 		h := testAccProvider.Meta().(hosting.Hosting)
-		ips, err := h.DescribeIP(hosting.IPFilter{ID: ipid})
+		ips, err := h.ListIPs(hosting.IPFilter{ID: ipid})
 		if err != nil {
 			return err
 		}
